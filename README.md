@@ -16,9 +16,18 @@ NanoOWL is a project that optimizes [OWL-ViT](https://huggingface.co/docs/transf
 Installation instructions:
 
 ```
-First, locally install tensorrt (no pip install); before you install tensorrt, 
-follow the "deb" cuda install instruction to add the necessary gpg key 
-to the urls of cuda packages (except last step "sudo apt install -y cuda").
+If you'd like to build tensorrt image encoder from raw owlv2 image encoder (which requires "trtexec"):
+    First, locally install tensorrt (not pip install) following 
+    https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html#downloading; 
+    During this process, before you call "sudo dpkg -i nv-tensorrt-local-repo-${os}-${tag}_1.0-1_amd64.deb", 
+    follow the "deb (local)" cuda installer instruction to add the necessary gpg key 
+    to the urls of system package dependencies (except last step "sudo apt install -y cuda").
+
+    Ensure that the local tensorrt version is identical to the version you will install through pip.
+    (I'm not sure if versions differ, errors will occur)
+    I use version 8.6.
+
+pip install tensorrt
 
 pip install onnx
 
@@ -26,7 +35,9 @@ git clone https://github.com/NVIDIA-AI-IOT/torch2trt
 cd torch2trt
 python setup.py install
 
-Install https://github.com/xuanlinli17/nanoowl   (through `pip install -e .`)
+git clone https://github.com/xuanlinli17/nanoowl   
+cd nanoowl
+pip install -e .
 ```
 
 ```
