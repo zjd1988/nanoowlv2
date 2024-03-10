@@ -457,7 +457,7 @@ class OwlPredictor(torch.nn.Module):
     def load_image_encoder_engine(engine_path: str, max_batch_size: int = 1):
         import tensorrt as trt
         from torch2trt import TRTModule
-
+        
         with trt.Logger() as logger, trt.Runtime(logger) as runtime:
             with open(engine_path, 'rb') as f:
                 engine_bytes = f.read()
@@ -544,8 +544,9 @@ class OwlPredictor(torch.nn.Module):
             image_width, image_height = image.size
             image_tensor = self.image_preprocessor.preprocess_pil_image(image)
         elif isinstance(image, np.ndarray):
+            # image: [n_images, H, W, 3] or [H, W, 3]
             assert image.dtype == np.uint8
-            image_height, image_width = image.shape[-2:]
+            image_height, image_width = image.shape[-3:-1]
             image_tensor = self.image_preprocessor.preprocess_numpy_array(image)
         else:
             raise ValueError("image must be PIL.Image.Image or np.ndarray")

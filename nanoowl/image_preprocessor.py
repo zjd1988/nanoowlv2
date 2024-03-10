@@ -97,7 +97,12 @@ class ImagePreprocessor(torch.nn.Module):
     @torch.no_grad()
     def preprocess_numpy_array(self, image: np.ndarray):
         image = torch.from_numpy(image)
-        image = image.permute(2, 0, 1)[None, ...]
+        if image.ndim == 3:
+            image = image.permute(2, 0, 1)[None, ...]
+        elif image.ndim == 4:
+            image = image.permute(0, 3, 1, 2)
+        else:
+            raise NotImplementedError(f"Image has shape {image.shape}")
         image = image.to(self.mean.device)
         image = image.type(self.mean.dtype)
         return self.forward(image, inplace=True)
