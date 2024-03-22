@@ -512,27 +512,31 @@ class OwlPredictor(torch.nn.Module):
             max_batch_size: int = 1, 
             fp16_mode = True, 
             onnx_path: Optional[str] = None,
-            onnx_opset: int = 17
+            onnx_opset: int = 17,
+            also_run_trtexec: bool = False,
         ):
 
         if onnx_path is None:
             onnx_dir = tempfile.mkdtemp()
             onnx_path = os.path.join(onnx_dir, "image_encoder.onnx")
-            self.export_image_encoder_onnx(onnx_path, onnx_opset=onnx_opset)
+        
+        self.export_image_encoder_onnx(onnx_path, onnx_opset=onnx_opset)
 
-        args = ["/usr/src/tensorrt/bin/trtexec"]
-    
-        args.append(f"--onnx={onnx_path}")
-        args.append(f"--saveEngine={engine_path}")
+        if also_run_trtexec:
+            # run trtexec after exporting onnx, if trtexec is included in the same building environment
+            args = ["/usr/src/tensorrt/bin/trtexec"]
+        
+            args.append(f"--onnx={onnx_path}")
+            args.append(f"--saveEngine={engine_path}")
 
-        if fp16_mode:
-            args += ["--fp16"]
+            if fp16_mode:
+                args += ["--fp16"]
 
-        args += [f"--shapes=image:1x3x{self.image_size}x{self.image_size}"]
+            args += [f"--shapes=image:1x3x{self.image_size}x{self.image_size}"]
 
-        subprocess.call(args)
+            subprocess.call(args)
 
-        return self.load_image_encoder_engine(engine_path, max_batch_size)
+            return self.load_image_encoder_engine(engine_path, max_batch_size)
 
     def predict(self, 
             image: Union[PIL.Image.Image, np.ndarray], 

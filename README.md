@@ -13,40 +13,55 @@ NanoOWL is a project that optimizes [OWL-ViT](https://huggingface.co/docs/transf
 
 ## Xuanlin's Notes
 
-Installation instructions:
+### Prerequisites
 
-```
-If you'd like to build tensorrt image encoder from raw owlv2 image encoder (which requires "trtexec"):
-    First, locally install tensorrt (not pip install) following 
-    https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html#downloading; 
-    During this process, before you call "sudo dpkg -i nv-tensorrt-local-repo-${os}-${tag}_1.0-1_amd64.deb", 
-    follow the "deb (local)" cuda installer instruction to add the necessary gpg key 
-    to the urls of system package dependencies (except last step "sudo apt install -y cuda").
-
-    Ensure that the local tensorrt version is identical to the version you will install through pip.
-    (I'm not sure if versions differ, errors will occur)
-    I use version 8.6.
-
-pip install tensorrt
-
-pip install onnx
-
-git clone https://github.com/NVIDIA-AI-IOT/torch2trt
-cd torch2trt
-python setup.py install
+```bash
+pip install tensorrt onnx
+pip install git+https://github.com/NVIDIA-AI-IOT/torch2trt
 
 git clone https://github.com/xuanlinli17/nanoowl   
 cd nanoowl
 pip install -e .
 ```
 
+### TensorRT Docker Install
+
+Before you perform TensorRT inference, you need to compile models into TensorRT engine. This requires a docker image that contains the `/usr/src/tensorrt/bin/trtexec` binary (or a TensorRT installed at the system level). For the ease of this process, we will use the official TensorRT docker.
+- Install docker and nvidia container toolkit, if not already. For nvidia container toolkit, see [this link](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+- Checkout the TensorRT docker version at [this link](https://docs.nvidia.com/deeplearning/tensorrt/container-release-notes/index.html#overview). Note that the docker's CUDA Toolkit and TensorRT versions must exactly match the one you are using. To checkout the locally-installed TensorRT version, run `pip show tensorrt`.
+- For example, if your CUDA version is 12.1 and your pip's tensorrt version is 8.6.1-post1, run
+```bash
+docker pull nvcr.io/nvidia/tensorrt:23.07-py3
+```
+
+In the above example, you can then use
+```bash
+docker run -it --rm -v $HOME:$HOME --user $(id -u):$(id -g) --gpus all nvcr.io/nvidia/tensorrt:23.07-py3  bash
+```
+to enter the TensorRT docker.
+
+### Building TensorRT models
+
 ```
 # TODO: investigate the impact of fp16 mode
 
+# In local torch environment,
 cd nanoowl
-python -m nanoowl.build_image_encoder_engine data/owl_image_encoder_large_patch14.engine --model_name google/owlvit-large-patch14
-python -m nanoowl.build_image_encoder_engine data/owlv2_image_encoder_base_patch16.engine --model_name google/owlv2-base-patch16-ensemble
-python -m nanoowl.build_image_encoder_engine data/owlv2_image_encoder_large_patch14.engine --model_name google/owlv2-large-patch14-ensemble
+python -m nanoowl.build_image_encoder_engine data/owl_image_encoder_large_patch14.engine \
+    --model_name google/owlvit-large-patch14 --onnx_path data/tmp_image_encoder.onnx
+# In TensorRT docker,
+/usr/src/tensorrt/bin/trtexec --onnx=data/tmp_image_encoder.onnx  \
+    --saveEngine=data/owl_image_encoder_large_patch14.engine --fp16  --shapes=image:1x3x840x840
+
+python -m nanoowl.build_image_encoder_engine data/owlv2_image_encoder_base_patch16.engine \
+    --model_name google/owlv2-base-patch16-ensemble --onnx_path data/tmp_image_encoder.onnx
+/usr/src/tensorrt/bin/trtexec --onnx=data/tmp_image_encoder.onnx  \
+    --saveEngine=data/owlv2_image_encoder_base_patch16.engine  --fp16  --shapes=image:1x3x960x960
+
+python -m nanoowl.build_image_encoder_engine data/owlv2_image_encoder_large_patch14.engine \
+    --model_name google/owlv2-large-patch14-ensemble --onnx_path data/tmp_image_encoder.onnx
+/usr/src/tensorrt/bin/trtexec --onnx=data/tmp_image_encoder.onnx  \
+    --saveEngine=data/owlv2_image_encoder_large_patch14.engine --fp16  --shapes=image:1x3x1008x1008
 
 cd examples
 python owl_predict.py     --prompt="[an owl, a glove]"     --threshold=0.1  --nms_threshold=0.3   --image_encoder_engine=../data/owl_image_encoder_large_patch14.engine  --model google/owlvit-large-patch14  --no_roi_align  --profile
@@ -149,7 +164,12 @@ NanoOWL runs real-time on Jetson Orin Nano.
     ```bash
     mkdir -p data
     python3 -m nanoowl.build_image_encoder_engine \
-        data/owl_image_encoder_patch32.engine
+        data/owl_image_encoder_patch32.engine --onnx_path data/tmp_image_encoder.onnx
+    
+    # enter TensorRT docker if you don't have trtexec installed systemwide
+
+    /usr/src/tensorrt/bin/trtexec --onnx=data/tmp_image_encoder.onnx \
+        --saveEngine=data/owl_image_encoder_patch32.engine --fp16  --shapes=image:1x3x768x768
     ```
     
 
