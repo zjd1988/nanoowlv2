@@ -22,6 +22,7 @@ pip install git+https://github.com/NVIDIA-AI-IOT/torch2trt
 git clone https://github.com/xuanlinli17/nanoowl   
 cd nanoowl
 pip install -e .
+mkdir data
 ```
 
 ### TensorRT Docker Install
