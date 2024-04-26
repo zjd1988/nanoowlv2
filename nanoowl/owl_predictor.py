@@ -539,7 +539,7 @@ class OwlPredictor(torch.nn.Module):
             return self.load_image_encoder_engine(engine_path, max_batch_size)
 
     def predict(self, 
-            image: Union[PIL.Image.Image, np.ndarray], 
+            image: Union[PIL.Image.Image, np.ndarray, torch.Tensor], 
             text: List[str], 
             text_encodings: Optional[OwlEncodeTextOutput],
             threshold: Union[int, float, List[Union[int, float]]] = 0.1,
@@ -557,6 +557,11 @@ class OwlPredictor(torch.nn.Module):
             assert image.dtype == np.uint8
             image_height, image_width = image.shape[-3:-1]
             image_tensor = self.image_preprocessor.preprocess_numpy_array(image)
+        elif isinstance(image, torch.Tensor):
+            # image: [n_images, H, W, 3] or [H, W, 3]
+            assert image.dtype == torch.uint8
+            image_height, image_width = image.shape[-3:-1]
+            image_tensor = self.image_preprocessor.preprocess_torch_tensor(image)
         else:
             raise ValueError("image must be PIL.Image.Image or np.ndarray")
 

@@ -110,8 +110,7 @@ class ImagePreprocessor(torch.nn.Module):
         return image
     
     @torch.no_grad()
-    def preprocess_numpy_array(self, image: np.ndarray):
-        image = torch.from_numpy(image)
+    def preprocess_torch_tensor(self, image: torch.Tensor):
         if image.ndim == 3:
             image = image.permute(2, 0, 1)[None, ...]
         elif image.ndim == 4:
@@ -121,6 +120,11 @@ class ImagePreprocessor(torch.nn.Module):
         image = image.to(self.mean.device)
         image = image.type(self.mean.dtype)
         return self.forward(image, inplace=True)
+
+    @torch.no_grad()
+    def preprocess_numpy_array(self, image: np.ndarray):
+        image = torch.from_numpy(image)
+        return self.preprocess_torch_tensor(image)
 
     @torch.no_grad()
     def preprocess_pil_image(self, image: PIL.Image.Image):
