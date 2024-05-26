@@ -49,19 +49,19 @@ to enter the TensorRT docker.
 # In local torch environment,
 cd nanoowl
 python -m nanoowl.build_image_encoder_engine data/owl_image_encoder_large_patch14.engine \
-    --model_name google/owlvit-large-patch14 --onnx_path data/tmp_image_encoder.onnx
+    --model_name google/owlvit-large-patch14 --onnx_path data/owl_image_encoder_large_patch14.onnx
 # In TensorRT docker,
-/usr/src/tensorrt/bin/trtexec --onnx=data/tmp_image_encoder.onnx  \
+/usr/src/tensorrt/bin/trtexec --onnx=data/owl_image_encoder_large_patch14.onnx  \
     --saveEngine=data/owl_image_encoder_large_patch14.engine --fp16  --shapes=image:1x3x840x840
 
 python -m nanoowl.build_image_encoder_engine data/owlv2_image_encoder_base_patch16.engine \
-    --model_name google/owlv2-base-patch16-ensemble --onnx_path data/tmp_image_encoder.onnx
-/usr/src/tensorrt/bin/trtexec --onnx=data/tmp_image_encoder.onnx  \
+    --model_name google/owlv2-base-patch16-ensemble --onnx_path data/owlv2_image_encoder_base_patch16.onnx
+/usr/src/tensorrt/bin/trtexec --onnx=data/owlv2_image_encoder_base_patch16.onnx  \
     --saveEngine=data/owlv2_image_encoder_base_patch16.engine  --fp16  --shapes=image:1x3x960x960
 
 python -m nanoowl.build_image_encoder_engine data/owlv2_image_encoder_large_patch14.engine \
-    --model_name google/owlv2-large-patch14-ensemble --onnx_path data/tmp_image_encoder.onnx
-/usr/src/tensorrt/bin/trtexec --onnx=data/tmp_image_encoder.onnx  \
+    --model_name google/owlv2-large-patch14-ensemble --onnx_path data/owlv2_image_encoder_large_patch14.onnx
+/usr/src/tensorrt/bin/trtexec --onnx=data/owlv2_image_encoder_large_patch14.onnx  \
     --saveEngine=data/owlv2_image_encoder_large_patch14.engine --fp16  --shapes=image:1x3x1008x1008
 
 cd examples
