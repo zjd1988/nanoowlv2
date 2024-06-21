@@ -323,6 +323,8 @@ class OwlPredictor(torch.nn.Module):
 
         if isinstance(threshold, (int, float)):
             threshold = [threshold] * len(text_output.text_embeds) #apply single threshold to all labels 
+        else:
+            assert len(threshold) == len(text_output.text_embeds), f"{len(threshold)} != {len(text_output.text_embeds)}; the number of thresholds should equal the number of classes to detect."
 
         num_input_images = image_output.image_class_embeds.shape[0]
 
