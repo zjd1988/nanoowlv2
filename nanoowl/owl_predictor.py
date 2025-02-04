@@ -181,7 +181,8 @@ class OwlPredictor(torch.nn.Module):
         self.mesh_grid = torch.stack(
             torch.meshgrid(
                 torch.linspace(0., 1., self.image_size),
-                torch.linspace(0., 1., self.image_size)
+                torch.linspace(0., 1., self.image_size),
+                indexing="ij"
             )
         ).to(self.device).float()
 

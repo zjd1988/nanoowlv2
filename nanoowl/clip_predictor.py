@@ -67,7 +67,8 @@ class ClipPredictor(torch.nn.Module):
         self.mesh_grid = torch.stack(
             torch.meshgrid(
                 torch.linspace(0., 1., self.image_size[1]),
-                torch.linspace(0., 1., self.image_size[0])
+                torch.linspace(0., 1., self.image_size[0]),
+                indexing="ij"
             )
         ).to(self.device).float()
         self.image_preprocessor = image_preprocessor.to(self.device).eval() if image_preprocessor else ImagePreprocessor().to(self.device).eval()
