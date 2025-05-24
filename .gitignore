@@ -3,3 +3,4 @@ data
 *.pyc
 charmap.json.gz
 sandbox
+__pycache__/

@@ -20,6 +20,7 @@ import PIL.Image
 import subprocess
 import tempfile
 import os
+from torchvision.ops.boxes import batched_nms
 from torchvision.ops import roi_align
 from transformers.models.owlvit.modeling_owlvit import OwlViTForObjectDetection
 from transformers.models.owlvit.processing_owlvit import OwlViTProcessor
@@ -28,7 +29,7 @@ from transformers.models.owlv2.modeling_owlv2 import Owlv2ForObjectDetection
 from transformers.models.owlv2.processing_owlv2 import Owlv2Processor
 from dataclasses import dataclass
 from typing import List, Optional, Union, Tuple
-from .image_preprocessor import ImagePreprocessor
+from nanoowl.image_preprocessor import ImagePreprocessor
 
 __all__ = [
     "OwlPredictor",
@@ -52,30 +53,37 @@ def _owl_center_to_corners_format_torch(bboxes_center):
     return bbox_corners
 
 
+# def _owl_get_image_size(hf_name: str):
+
+#     image_sizes = {
+#         "google/owlvit-base-patch32": 768,
+#         "google/owlvit-base-patch16": 768,
+#         "google/owlvit-large-patch14": 840,
+#         "google/owlv2-base-patch16-ensemble": 960,
+#         "google/owlv2-large-patch14-ensemble": 1008,
+#     }
+
+#     return image_sizes[hf_name]
+
 def _owl_get_image_size(hf_name: str):
+    return 1008
 
-    image_sizes = {
-        "google/owlvit-base-patch32": 768,
-        "google/owlvit-base-patch16": 768,
-        "google/owlvit-large-patch14": 840,
-        "google/owlv2-base-patch16-ensemble": 960,
-        "google/owlv2-large-patch14-ensemble": 1008,
-    }
 
-    return image_sizes[hf_name]
+# def _owl_get_patch_size(hf_name: str):
 
+#     patch_sizes = {
+#         "google/owlvit-base-patch32": 32,
+#         "google/owlvit-base-patch16": 16,
+#         "google/owlvit-large-patch14": 14,
+#         "google/owlv2-base-patch16-ensemble": 16,
+#         "google/owlv2-large-patch14-ensemble": 14,
+#     }
+
+#     return patch_sizes[hf_name]
 
 def _owl_get_patch_size(hf_name: str):
 
-    patch_sizes = {
-        "google/owlvit-base-patch32": 32,
-        "google/owlvit-base-patch16": 16,
-        "google/owlvit-large-patch14": 14,
-        "google/owlv2-base-patch16-ensemble": 16,
-        "google/owlv2-large-patch14-ensemble": 14,
-    }
-
-    return patch_sizes[hf_name]
+    return 14
 
 
 # This function is modified from https://github.com/huggingface/transformers/blob/e8fdd7875def7be59e2c9b823705fbf003163ea0/src/transformers/models/owlvit/modeling_owlvit.py#L1333
@@ -207,10 +215,10 @@ class OwlPredictor(torch.nn.Module):
 
     def get_device(self):
         return self.device
-        
+
     def get_image_size(self):
         return (self.image_size, self.image_size)
-    
+
     def encode_text(self, text: List[str]) -> OwlEncodeTextOutput:
         text_input = self.processor(text=text, return_tensors="pt")
         input_ids = text_input['input_ids'].to(self.device)
@@ -227,7 +235,7 @@ class OwlPredictor(torch.nn.Module):
         return OwlEncodeTextOutput(text_embeds=text_embeds)
 
     def encode_image_torch(self, image: torch.Tensor) -> OwlEncodeImageOutput:
-        
+
         if not self.is_v2:
             vision_outputs = self.model.owlvit.vision_model(image)
         else:
@@ -262,7 +270,7 @@ class OwlPredictor(torch.nn.Module):
         )
 
         return output
-    
+
     def encode_image_trt(self, image: torch.Tensor) -> OwlEncodeImageOutput:
         return self.image_encoder_engine(image)
 
@@ -304,7 +312,7 @@ class OwlPredictor(torch.nn.Module):
             roi_images = (roi_images * mask[:, None, :, :])
 
         return roi_images, rois
-    
+
     def encode_rois(self, image: torch.Tensor, rois: torch.Tensor, pad_square: bool = True, padding_scale: float=1.0):
         # with torch_timeit_sync("extract rois"):
         roi_images, rois = self.extract_rois(image, rois, pad_square, padding_scale)
@@ -395,6 +403,130 @@ class OwlPredictor(torch.nn.Module):
             input_indices=input_indices
         )
 
+    def decode_new(self, 
+            image_output: OwlEncodeImageOutput, 
+            text_output: OwlEncodeTextOutput,
+            threshold: Union[int, float, List[Union[int, float]]] = 0.1,
+            nms_threshold: int = 1.0,
+            class_based_nms: bool = True
+        ) -> OwlDecodeOutput:
+
+        if isinstance(threshold, (int, float)):
+            threshold = [threshold] * len(text_output.text_embeds) #apply single threshold to all labels 
+        else:
+            assert len(threshold) == len(text_output.text_embeds), f"{len(threshold)} != {len(text_output.text_embeds)}; the number of thresholds should equal the number of classes to detect."
+
+        image_class_embeds = image_output.image_class_embeds
+        image_class_embeds = image_class_embeds / (torch.linalg.norm(image_class_embeds, dim=-1, keepdim=True) + 1e-6)
+        query_embeds = text_output.text_embeds
+        query_embeds = query_embeds / (torch.linalg.norm(query_embeds, dim=-1, keepdim=True) + 1e-6)
+        logits = torch.einsum("...pd,...qd->...pq", image_class_embeds, query_embeds)
+        target_class_logits = (logits + image_output.logit_shift) * image_output.logit_scale
+
+        # as tensor, 后面要做 nms
+        b, hw, q = target_class_logits.shape
+        target_class_logits = torch.tensor(target_class_logits)
+        target_boxes_as_corners = torch.tensor(image_output.pred_boxes).unsqueeze(2).expand(-1, -1, q, -1)
+
+        # Cut Threshold
+        target_class_sigmoids = torch.sigmoid(target_class_logits).cpu()
+        scores_max = target_class_sigmoids.max(dim=-1)
+        labels = scores_max.indices
+        scores = scores_max.values
+
+        masks = []
+        for i, thresh in enumerate(threshold):
+            label_mask = labels == i
+            score_mask = scores > thresh
+            obj_mask = torch.logical_and(label_mask,score_mask)
+            masks.append(obj_mask)
+        masks = torch.stack(masks, dim=len(masks[0].size()))
+
+        # logger.blueinfo("target_class_sigmoids max score = %s", torch.max(target_class_sigmoids))
+        # masks = target_class_sigmoids > threshold[0]
+        target_box_nms_idxs = torch.arange(b * q).reshape(b, 1, q).expand(-1, hw, -1)[masks]
+        target_boxes_as_corners = target_boxes_as_corners[masks].cpu()
+        target_class_sigmoids = target_class_sigmoids[masks]
+
+        # NMS
+        keep_inds = batched_nms(target_boxes_as_corners,
+                                target_class_sigmoids,
+                                idxs=target_box_nms_idxs,
+                                iou_threshold=nms_threshold)
+        bboxes = target_boxes_as_corners[keep_inds]
+        scores = target_class_sigmoids[keep_inds]
+        query_ids = target_box_nms_idxs[keep_inds]
+
+        # # 恢复 bbox 到原始坐标
+        # bboxes *= max(image.size)
+        scores = np.array(scores).tolist()
+        bboxes = np.array(bboxes)
+        query_ids = np.array(query_ids).tolist()
+
+        return OwlDecodeOutput(
+            labels=query_ids,
+            scores=scores,
+            boxes=bboxes,
+            input_indices=query_ids
+        )
+
+    def decode_onnx(self, 
+            onnx_outpus, 
+            threshold: Union[int, float, List[Union[int, float]]] = 0.1,
+            nms_threshold: int = 1.0,
+            class_based_nms: bool = True
+        ) -> OwlDecodeOutput:
+
+        if isinstance(threshold, (int, float)):
+            threshold = [threshold] * onnx_outpus[0].shape[-1] #apply single threshold to all labels 
+        else:
+            assert len(threshold) == len(text_output.text_embeds), f"{len(threshold)} != {len(text_output.text_embeds)}; the number of thresholds should equal the number of classes to detect."
+
+        # Cut Threshold
+        target_class_logits = torch.tensor(onnx_outpus[0])
+        target_boxes_as_corners = torch.tensor(onnx_outpus[2])
+        target_class_sigmoids = torch.sigmoid(target_class_logits)
+        b, hw, q = target_class_sigmoids.shape
+        target_boxes_as_corners = target_boxes_as_corners.unsqueeze(2).expand(-1, -1, q, -1)
+        scores_max = target_class_sigmoids.max(dim=-1)
+        labels = scores_max.indices
+        scores = scores_max.values
+
+        masks = []
+        for i, thresh in enumerate(threshold):
+            label_mask = labels == i
+            score_mask = scores > thresh
+            obj_mask = torch.logical_and(label_mask,score_mask)
+            masks.append(obj_mask)
+        masks = torch.stack(masks, dim=len(masks[0].size()))
+
+        # logger.blueinfo("target_class_sigmoids max score = %s", torch.max(target_class_sigmoids))
+        target_box_nms_idxs = torch.arange(b * q).reshape(b, 1, q).expand(-1, hw, -1)[masks]
+        target_boxes_as_corners = target_boxes_as_corners[masks]
+        target_class_sigmoids = target_class_sigmoids[masks]
+
+        # NMS
+        keep_inds = batched_nms(target_boxes_as_corners,
+                                target_class_sigmoids,
+                                idxs=target_box_nms_idxs,
+                                iou_threshold=nms_threshold)
+        bboxes = target_boxes_as_corners[keep_inds]
+        scores = target_class_sigmoids[keep_inds]
+        query_ids = target_box_nms_idxs[keep_inds]
+
+        # # 恢复 bbox 到原始坐标
+        # bboxes *= max(image.size)
+        scores = np.array(scores).tolist()
+        bboxes = np.array(bboxes)
+        query_ids = np.array(query_ids).tolist()
+
+        return OwlDecodeOutput(
+            labels=query_ids,
+            scores=scores,
+            boxes=bboxes,
+            input_indices=query_ids
+        )
+
     @staticmethod
     def get_image_encoder_input_names():
         return ["image"]
@@ -409,7 +541,6 @@ class OwlPredictor(torch.nn.Module):
             "pred_boxes"
         ]
         return names
-
 
     def export_image_encoder_onnx(self, 
             output_path: str,
@@ -459,7 +590,68 @@ class OwlPredictor(torch.nn.Module):
             dynamic_axes=dynamic_axes,
             opset_version=onnx_opset
         )
-    
+
+    def export_image_encoder_onnx_new(self, 
+            output_path: str,
+            use_dynamic_axes: bool = True,
+            batch_size: int = 1,
+            onnx_opset=17
+        ):
+        
+        class TempModule(torch.nn.Module):
+            def __init__(self, parent):
+                super().__init__()
+                self.parent = parent
+            
+            @torch.no_grad()
+            def forward(self, image, text_embeds):
+                resized_image_h, resized_image_w = image.shape[-2:]
+                output = self.parent.encode_image_torch(image)
+                image_class_embeds = output.image_class_embeds
+                image_class_embeds = image_class_embeds / (torch.linalg.norm(image_class_embeds, dim=-1, keepdim=True) + 1e-6)
+                query_embeds = text_embeds
+                query_embeds = query_embeds / (torch.linalg.norm(query_embeds, dim=-1, keepdim=True) + 1e-6)
+                # logits = torch.einsum("...pd,...qd->...pq", image_class_embeds, query_embeds)
+                logits = torch.einsum("bpd,qd->bpq", image_class_embeds, query_embeds)
+                logits = (logits + output.logit_shift) * output.logit_scale
+                return (
+                    logits,
+                    output.image_embeds,
+                    output.pred_boxes
+                )
+
+        # data = torch.randn(batch_size, 3, self.image_size, self.image_size).to(self.device)
+
+        if use_dynamic_axes:
+            dynamic_axes =  {
+                "pixel_values": {0: "batch"},
+                "query_embeds": {0: "batch"},
+                "target_class_logits": {0: "batch"},
+                "objectnesses": {0: "batch"},
+                "boxes": {0: "batch"}
+            }
+        else:
+            dynamic_axes = {}
+
+        model = TempModule(self)
+        image = PIL.Image.open("assets/owl_glove_small.jpg")
+        data = model.parent.processor(images=image, return_tensors="pt").pixel_values.to('cuda')
+        text = ["an owl", "a glove"]
+        text_embeds = model.parent.encode_text(text).text_embeds
+
+        input_names = ["pixel_values", "query_embeds"]
+        output_names = ["target_class_logits", "objectnesses", "boxes"]
+        torch.onnx.export(
+            model, 
+            (data, text_embeds), 
+            output_path, 
+            input_names=input_names, 
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            opset_version=onnx_opset
+        )
+
+
     @staticmethod
     def load_image_encoder_engine(engine_path: str, max_batch_size: int = 1):
         import tensorrt as trt
@@ -522,8 +714,9 @@ class OwlPredictor(torch.nn.Module):
         if onnx_path is None:
             onnx_dir = tempfile.mkdtemp()
             onnx_path = os.path.join(onnx_dir, "image_encoder.onnx")
-        
-        self.export_image_encoder_onnx(onnx_path, onnx_opset=onnx_opset)
+
+        # self.export_image_encoder_onnx(onnx_path, onnx_opset=onnx_opset)
+        self.export_image_encoder_onnx_new(onnx_path, onnx_opset=onnx_opset)
 
         if also_run_trtexec:
             # run trtexec after exporting onnx, if trtexec is included in the same building environment
@@ -568,6 +761,8 @@ class OwlPredictor(torch.nn.Module):
         else:
             raise ValueError("image must be PIL.Image.Image or np.ndarray")
 
+        image_tensor = self.processor(images=image, return_tensors="pt").pixel_values.to('cuda')
+
         if text_encodings is None:
             text_encodings = self.encode_text(text)
 
@@ -577,24 +772,82 @@ class OwlPredictor(torch.nn.Module):
         else:
             resized_image_h, resized_image_w = image_tensor.shape[-2:]
             image_encodings = self.encode_image(image_tensor)
-            pred_boxes = image_encodings.pred_boxes
-            if not self.is_v2:
-                pred_boxes = pred_boxes * torch.tensor(
-                    [[[image_width, image_height, image_width, image_height]]], 
-                    dtype=pred_boxes.dtype, device=pred_boxes.device
-                )
-            else:
-                pred_boxes = pred_boxes * torch.tensor(
-                    [[[resized_image_w, resized_image_h, 
-                       resized_image_w, resized_image_h]]], 
-                    dtype=pred_boxes.dtype, device=pred_boxes.device
-                )
-                if (image_width >= resized_image_w) or (image_height >= resized_image_h):
-                    orig_to_resize_factor = max(image_height / resized_image_h, image_width / resized_image_w)
-                    pred_boxes = pred_boxes * torch.ones(
-                        [1, 1, 4], dtype=pred_boxes.dtype, device=pred_boxes.device
-                    ) * orig_to_resize_factor
-            image_encodings.pred_boxes = pred_boxes
+            # pred_boxes = image_encodings.pred_boxes
+            # if not self.is_v2:
+            #     pred_boxes = pred_boxes * torch.tensor(
+            #         [[[image_width, image_height, image_width, image_height]]], 
+            #         dtype=pred_boxes.dtype, device=pred_boxes.device
+            #     )
+            # else:
+            #     pred_boxes = pred_boxes * torch.tensor(
+            #         [[[resized_image_w, resized_image_h, 
+            #            resized_image_w, resized_image_h]]], 
+            #         dtype=pred_boxes.dtype, device=pred_boxes.device
+            #     )
+            #     if (image_width >= resized_image_w) or (image_height >= resized_image_h):
+            #         orig_to_resize_factor = max(image_height / resized_image_h, image_width / resized_image_w)
+            #         pred_boxes = pred_boxes * torch.ones(
+            #             [1, 1, 4], dtype=pred_boxes.dtype, device=pred_boxes.device
+            #         ) * orig_to_resize_factor
+            # image_encodings.pred_boxes = pred_boxes
+            image_encodings.pred_boxes *= max(image.size)
 
         return self.decode(image_encodings, text_encodings, threshold, nms_threshold, class_based_nms)
 
+    def predict_new(self, 
+            image: Union[PIL.Image.Image, np.ndarray, torch.Tensor], 
+            text: List[str], 
+            text_encodings: Optional[OwlEncodeTextOutput],
+            threshold: Union[int, float, List[Union[int, float]]] = 0.1,
+            nms_threshold: int = 1.0,
+            class_based_nms: bool = True,
+            pad_square: bool = True,
+            
+        ) -> OwlDecodeOutput:
+
+        image_tensor = self.processor(images=image, return_tensors="pt").pixel_values.to('cuda')
+
+        if text_encodings is None:
+            text_encodings = self.encode_text(text)
+
+        if not self.no_roi_align:
+            rois = torch.tensor([[0, 0, image_width, image_height]], dtype=image_tensor.dtype, device=image_tensor.device)
+            image_encodings = self.encode_rois(image_tensor, rois, pad_square=pad_square)
+        else:
+            image_encodings = self.encode_image(image_tensor)
+
+        image_encodings.pred_boxes *= max(image.size)
+        return self.decode_new(image_encodings, text_encodings, threshold, nms_threshold, class_based_nms)
+
+    def predict_with_onnx(self, 
+            image: Union[PIL.Image.Image, np.ndarray, torch.Tensor], 
+            text: List[str], 
+            text_encodings: Optional[OwlEncodeTextOutput],
+            onnx_session = None,
+            threshold: Union[int, float, List[Union[int, float]]] = 0.1,
+            nms_threshold: int = 1.0,
+            class_based_nms: bool = True,
+            pad_square: bool = True,
+            
+        ) -> OwlDecodeOutput:
+
+        image_tensor = self.processor(images=image, return_tensors="pt").pixel_values.to('cuda')
+
+        if text_encodings is None:
+            text_encodings = self.encode_text(text)
+
+        if not self.no_roi_align:
+            rois = torch.tensor([[0, 0, image_width, image_height]], dtype=image_tensor.dtype, device=image_tensor.device)
+            image_encodings = self.encode_rois(image_tensor, rois, pad_square=pad_square)
+        else:
+            image_encodings = self.encode_image(image_tensor)
+
+            onnx_inputs = {}
+            onnx_inputs["pixel_values"] = image_tensor.detach().cpu().numpy()
+            onnx_inputs["query_embeds"] = text_encodings.text_embeds.detach().cpu().numpy()
+
+            onnx_outputs = ["target_class_logits", "objectnesses", "boxes"]
+            onnx_results = onnx_session.run(onnx_outputs, onnx_inputs)
+
+        onnx_results[2] *= max(image.size)
+        return self.decode_onnx(onnx_results, threshold, nms_threshold, class_based_nms)

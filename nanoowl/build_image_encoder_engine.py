@@ -12,10 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import sys
+import os
+sys.path.append("/data1/zhaojd-a/github_codes/clip_owl_prj/nanoowlv2")
 
 import argparse
-from .owl_predictor import OwlPredictor
+from nanoowl.owl_predictor import OwlPredictor
 
 
 if __name__ == "__main__":
