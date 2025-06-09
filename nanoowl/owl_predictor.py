@@ -403,7 +403,7 @@ class OwlPredictor(torch.nn.Module):
             input_indices=input_indices
         )
 
-    def decode_new(self, 
+    def decode_pt(self, 
             image_output: OwlEncodeImageOutput, 
             text_output: OwlEncodeTextOutput,
             threshold: Union[int, float, List[Union[int, float]]] = 0.1,

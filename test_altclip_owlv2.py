@@ -142,7 +142,7 @@ def test_owlv2_pt(owlv2_pt_path, save_path):
     # text = ["an owl",]
     # text = ["a glove",]
     text_encodings = owl_predictor.encode_text(text)
-    output = owl_predictor.predict(image=image, text=text, text_encodings=text_encodings, threshold=0.05, nms_threshold=0.3)
+    output = owl_predictor.predict_pt(image=image, text=text, text_encodings=text_encodings, threshold=0.05, nms_threshold=0.3)
     print(output)
     image = draw_owl_output(image, output, text=text, draw_text=True)
     image.save(save_path)
@@ -155,7 +155,7 @@ def test_owlv2_onnx(owlv2_pt_path, owlv2_onnx_path, save_path):
     # text = ["an owl",]
     # text = ["a glove",]
     text_encodings = owl_predictor.encode_text(text)
-    session = ort.InferenceSession(owlv2_onnx_path)    
+    session = ort.InferenceSession(owlv2_onnx_path)
     output = owl_predictor.predict_with_onnx(image=image, text=text, text_encodings=text_encodings, onnx_session=session, threshold=0.05, nms_threshold=0.3)
     print(output)
     image = draw_owl_output(image, output, text=text, draw_text=True)
@@ -206,4 +206,6 @@ if __name__ == "__main__":
     # test_altclip_tritonserver_perf(altclip_pt_path, triton_url, 100)
     # compare_owlv2_onnx_with_tritonserver(owlv2_pt_path, owlv2_onnx_path, triton_url)
     # test_owlv2_tritonserver_perf(owlv2_pt_path, triton_url, 100)
-    test_owlv2_tritonserver(owlv2_pt_path, triton_url, "owlv2_grpc_result.jpg")
+    # test_owlv2_pt(owlv2_pt_path, "owlv2_pt_result.jpg")
+    # test_owlv2_onnx(owlv2_pt_path, owlv2_onnx_path, "owlv2_onnx_result.jpg")
+    test_owlv2_tritonserver(owlv2_pt_path, triton_url, "owlv2_tritonserver_result.jpg")
