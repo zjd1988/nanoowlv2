@@ -6,9 +6,18 @@ python download_llm.py
 
 ## 准备镜像
 ```
+deepstream 跟 tritonserver配套信息可以从https://github.com/NVIDIA-AI-IOT/deepstream_dockers获取
+
+deepstream 7.0 跟 tritonserver23.10配套
 docker pull nvcr.io/nvidia/tensorrt:23.10-py3
 docker pull nvcr.io/nvidia/tritonserver:23.10-py3
 docker pull nvcr.io/nvidia/deepstream:7.0-triton-multiarch
+
+deepstream 7.1 跟 tritonserver24.08配套
+docker pull nvcr.io/nvidia/tensorrt:24.08-py3
+docker pull nvcr.io/nvidia/tritonserver:24.08-py3
+docker pull nvcr.io/nvidia/deepstream:7.1-triton-multiarch
+
 docker pull bluenviron/mediamtx:latest-ffmpeg
 ```
 
@@ -98,6 +107,20 @@ docker run --rm -it --gpus="device=0" --shm-size 32g -v $PWD/nanoowlv2:/workspac
 /usr/src/tensorrt/bin/trtexec --onnx=data/cnclip_onnx_models/ViT-L-14.txt.fp32.onnx --saveEngine=data/cnclip_engine_models/cnclip_text.engine --fp16
 ```
 
+## yolo 模型导出和转换
+```
+git clone https://github.com/laugh12321/TensorRT-YOLO.git -b v6.2.0
+1 使用工程下的Dockerfile构建代码构建和模型导出转换镜像，或者deepstream镜像，不过需要安装以下包
+python3 -m pip install "pybind11[global]"
+python3 -m pip install -U tensorrt_yolo
+python3 -m pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu121
+python3 -m pip install ultralytics
+python3 -m pip install onnx
+
+2 参照doc/cn/build_and_install.md 编译安装
+3 参照doc/cn/model_export.md 执行模型转换和构建
+```
+
 ## tritonserver模型加载测试
 ```
 <!-- 将转换后的engine文件拷贝triton_models指定位置 -->
@@ -112,9 +135,14 @@ or
 docker run --rm -it --gpus all --shm-size 32g -p 9001:9001-v $PWD/triton_models:/workspace/triton_models \
     nvcr.io/nvidia/tensorrt:23.10-py3 /bin/bash
 
+<!-- 启动时加载全部模型 -->
 tritonserver --model-repository=/workspace/models --grpc-port=9991
-or
+
+<!-- 启动时不加载 -->
 tritonserver --model-repository=/workspace/models --grpc-port=9991 --model-control-mode=explicit
+
+<!-- 启动时不加载，同时指定tensorrt的插件so地址 -->
+tritonserver --model-repository=/workspace/models --grpc-port=9991 --model-control-mode=explicit --backend-config=tensorrt,plugins="/workspace/models/yolov8/libcustom_plugins.so"
 ```
 
 ## 推流拉流测试
@@ -128,7 +156,7 @@ docker exec -it xxxxx /bin/sh
 <!-- 推流 -->
 ffmpeg -re -stream_loop -1 -i sample_1080p_h264.mp4 -c copy -f rtsp rtsp://127.0.0.1:8554/mystream
 
-<!-- 拉流 -->
+<!-- 拉流测试 -->
 使用vlc软件拉流: rtsp://xxx.xxx.xxx.xxx:18554/mystream
 使用gst-paly拉流: gst-play-1.0 rtsp://localhost:18554/mystream
 使用ffmpeg拉流: ffmpeg -i rtsp://localhost:18554/mystream -c copy output.mp4
